@@ -40,17 +40,17 @@ def define_scope(function, scope=None, *args, **kwargs):
 
     return decorator
 
-def block(inputs, size=128):
-    short_cut = inputs
-    size = int(short_cut.shape[1])
-    
-    inputs = tf.contrib.slim.fully_connected(inputs, size)
-    
-    inputs = tf.contrib.slim.fully_connected(inputs, size)
-    
-    inputs = tf.contrib.slim.fully_connected(inputs, int(short_cut.shape[1]))
-    
-    return inputs+short_cut
+def block(inputs, size=512):
+    sc = inputs
+    size = int(sc.shape[1])
+    #pre_activation version
+    inputs = tf.nn.relu(inputs)
+    #inputs = tf.nn.dropout(inputs, 0.8)
+    #bottleneck unit
+    inputs = tf.contrib.slim.fully_connected(inputs, size //4)
+    inputs = tf.contrib.slim.fully_connected(inputs, size //4)
+    inputs = tf.contrib.slim.fully_connected(inputs, int(sc.shape[1]), activation_fn=None)  
+    return inputs + sc
 
 class Model:
     def __init__(self, input_user, input_item, output, num_users, num_items):
@@ -73,7 +73,9 @@ class Model:
             self.embedding_items = embedding_items
             user_embedding = tf.reduce_sum(tf.nn.embedding_lookup(embedding_users, self.input_user), axis=1)
             item_embedding = tf.reduce_sum(tf.nn.embedding_lookup(embedding_items, self.input_item), axis=1)
-            # merge_embedding = tf.concat([user_embedding, item_embedding], axis=1, name="merge_embedding")
+            minus_user = -user_embedding
+            minus_item = -item_embedding
+            merge_embedding = tf.concat([user_embedding, minus_user, item_embedding, minus_item], axis=1, name="merge_embedding")
             tf.summary.histogram("embedding_users",embedding_users)
             tf.summary.histogram("embedding_items",embedding_items)
 
@@ -90,17 +92,11 @@ class Model:
 #                 x = tf.concat([x, GMF_embed], axis=1, name = "concat_embedding")
 #                 print ("MLP is False, Running NeuMF")
 #             x = tf.contrib.slim.fully_connected(x, 1, tf.identity)
-        x = block(user_embedding)
-        for _ in range(8):
+        x = block(merge_embedding)
+        for _ in range(5):
             x = block(x)
-      
-
-        x2 = block(item_embedding)
-        for _ in range(8):
-            x2 = block(x2)
-
-        r = x*x2
-        
+        puser, nuser, pitem, nitem = tf.split(x, 4, 1)
+        r = (puser - nuser) * (pitem - nitem)
         # r = tf.contrib.slim.fully_connected(r, 8)
         r = tf.contrib.slim.fully_connected(r, 1, tf.identity)
         return r
